@@ -1,0 +1,10 @@
+
+
+import("survival")
+
+export(gcmrec, Survr, is.Survr, addCenTime, List.to.Dataframe, graph.caltimes)
+
+S3method(plot,gcmrec)
+S3method(lines,gcmrec)
+S3method(print,gcmrec)
+S3method(summary,gcmrec)

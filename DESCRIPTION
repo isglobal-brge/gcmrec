@@ -1,0 +1,11 @@
+Package: gcmrec
+Version: 1.0-5
+Date: 2012-Jun-11
+Depends: R (>= 2.14.0), survival
+Title: General class of models for recurrent event data
+Author: Juan R. González <jrgonzalez@creal.cat>, Elizabeth H. Slate <SlateEH@musc.edu>, and Edsel A Peña <pena@stat.sc.edu>
+Maintainer: Juan R González <jrgonzalez@creal.cat>
+Description: Parameters estimation of the general semiparametric model for recurrent event data proposed by Peña and Hollander.  
+License: GPL (>= 2)
+URL: http://www.r-project.org
+Encoding: latin1
