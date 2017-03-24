@@ -435,7 +435,7 @@ function(datin, id=1, time=2, event=3)
  datout <- NULL
  for (i in ids)
  {
-  thissubj <- datin[datin[,id], == i,,drop=FALSE]
+  thissubj <- datin[datin[,id] == i, , drop=FALSE]
   nrecs <- nrow(thissubj)
   if (thissubj[nrecs, event] == 1)
   {
