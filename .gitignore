@@ -1,0 +1,15 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+src/*.o
+src/*.so
+src/*.dll
+
+# macOS
+.DS_Store
+
+# Artefactos de R CMD build / check
+*.Rcheck/
+*.tar.gz
+inst/doc/

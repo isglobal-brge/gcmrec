@@ -1,11 +1,54 @@
 Package: gcmrec
-Version: 1.0-5
-Date: 2012-Jun-11
-Depends: survival
-Title: General class of models for recurrent event data
-Author: Juan R. González <jrgonzalez@creal.cat>, Elizabeth H. Slate <SlateEH@musc.edu>, and Edsel A Peña <pena@stat.sc.edu>
-Maintainer: Juan R González <jrgonzalez@creal.cat>
-Description: Parameters estimation of the general semiparametric model for recurrent event data proposed by Peña and Hollander.  
+Type: Package
+Version: 2.0.0
+Date: 2026-08-05
+Title: General Class of Models for Recurrent Event Data
+Authors@R: c(
+    person(given = "Dolors",
+           family = "Pelegri-Siso",
+           email = "dolors.pelegri@isglobal.org",
+           role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-5993-3003")),
+    person("Juan R.", "González", role = "aut",
+           email = "juanr.gonzalez@isglobal.org"),
+    person("Elizabeth H.", "Slate", role = "aut"),
+    person("Edsel A.", "Peña", role = "aut"))
+Description: Parameter estimation for the general class of semiparametric
+    models for recurrent event data proposed by Peña and Hollander (2004,
+    <ISBN:978-1-4020-7737-6>). The model incorporates an effective age
+    function encoding the impact of interventions after each event
+    occurrence, the effect of accumulating event occurrences, a link
+    function for possibly time-dependent covariates, and optional gamma
+    frailties to induce dependence among inter-event times. It also fits
+    the extension for cancer relapses of González et al. (2005)
+    <doi:10.1002/sim.2410>. Estimation is performed by profile likelihood,
+    with an expectation-maximization algorithm for the frailty model, and
+    the package provides descriptive, diagnostic and predictive tools for
+    the fitted models.
+Depends: R (>= 3.5.0)
+Imports:
+    Rcpp,
+    survival,
+    ggplot2,
+    scales,
+    rlang,
+    stats,
+    graphics,
+    grDevices
+LinkingTo:
+    Rcpp,
+    RcppArmadillo
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown,
+    BiocStyle
+VignetteBuilder: knitr
+Config/testthat/edition: 3
 License: GPL (>= 2)
-URL: http://www.r-project.org
-Encoding: latin1
+URL: https://github.com/isglobal-brge/gcmrec
+BugReports: https://github.com/isglobal-brge/gcmrec/issues
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
