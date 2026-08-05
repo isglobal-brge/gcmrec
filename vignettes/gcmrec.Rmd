@@ -1,0 +1,530 @@
+---
+title: "gcmrec: modelling recurrent events with effective age"
+subtitle: "Dolors Pelegrí-Sisó, Juan R. González, Elizabeth H. Slate and Edsel A. Peña"
+author: |
+   Institute for Global Health (ISGlobal), Barcelona, Spain
+   Bioinformatics Research Group in Epidemiology (BRGE)
+   https://brge.isglobal.org
+date: "`r Sys.Date()`"
+package: "`r BiocStyle::pkg_ver('gcmrec')`"
+abstract: |
+  gcmrec fits the general class of semiparametric models for recurrent event
+  data of Peña and Hollander (2004). Unlike standard survival models, it
+  accounts for what an event does to the subject through an *effective age*
+  function, for the effect of accumulating occurrences, and for unobserved
+  heterogeneity through gamma frailties, so it applies to settings such as
+  repeated hospital readmissions, cancer relapses or successive failures of a
+  machine. Estimation is carried out in C++ by profile likelihood, with an EM
+  algorithm for the frailty model, and the package provides descriptive,
+  diagnostic and predictive tools for the fitted models. This vignette works
+  through a complete analysis of a real cohort.
+output:
+  BiocStyle::html_document:
+    number_sections: true
+    toc: yes
+    toc_float: yes
+    fig_caption: yes
+bibliography: references.bib
+link-citations: true
+vignette: >
+  %\VignetteIndexEntry{gcmrec: modelling recurrent events with effective age}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", message = FALSE,
+                      warning = FALSE, fig.width = 6.2, fig.height = 5,
+                      fig.align = "center")
+set.seed(1)
+```
+
+# Introduction
+
+Survival analysis usually asks *when* an event happens. But many events happen
+**more than once** to the same subject: a patient is readmitted to hospital
+repeatedly, a machine breaks down again and again, a cancer relapses. Treating
+each occurrence as an independent observation ignores three things that make
+recurrent data different:
+
+1. **The subject is not new after an event.** A patient discharged after a
+   readmission is not the same as a patient just out of surgery. How much the
+   intervention "rejuvenates" the subject is itself part of the model.
+2. **Occurrences accumulate.** The tenth readmission may carry a different risk
+   than the first, beyond anything the covariates explain.
+3. **Subjects differ in ways we cannot measure.** Some patients are frail and
+   accumulate events; their inter-event times are not independent.
+
+The model of @pena2004 puts all three in a single framework, and `gcmrec` fits
+it. This vignette shows how, and — more importantly — how to choose its options
+and read what it returns.
+
+## The model
+
+You do not need the details to use the package, but the intuition helps
+interpret the output. The risk of the next event for subject $i$ at time $s$ is
+
+$$\lambda_i(s) = \lambda_0\!\left[\mathcal{E}_i(s)\right]\;
+                 \rho\!\left(N_i(s^-); \alpha\right)\;
+                 \exp(X_i'\beta)\; Z_i ,$$
+
+built from four pieces. The **effective age** $\mathcal{E}_i(s)$ is how old the
+subject *behaves*, which resets (fully or partially) at each event — this is
+what encodes the effect of the intervention. The **baseline** $\lambda_0$ is
+left unspecified (semiparametric, as in Cox regression) and is evaluated at the
+effective age rather than at calendar time. The function
+$\rho(k;\alpha) = \alpha^k$ carries the effect of the $k$ accumulated
+occurrences: $\alpha > 1$ means risk grows with each event, $\alpha < 1$ that it
+falls, $\alpha = 1$ that occurrences leave the risk unchanged. Finally $Z_i$ is
+an optional gamma **frailty**, a subject-specific multiplier that induces
+dependence between the inter-event times of the same subject.
+
+# Installation
+
+Install the released version from CRAN:
+
+```{r install, eval = FALSE}
+install.packages("gcmrec")
+```
+
+The package needs a C++ compiler at install time, which the standard R
+toolchain provides on all platforms, and depends on
+`r CRANpkg("Rcpp")`/`r CRANpkg("RcppArmadillo")` for the numerical core,
+`r CRANpkg("survival")` for the model frame machinery and
+`r CRANpkg("ggplot2")` for the graphics. All of them are installed
+automatically.
+
+Load it with:
+
+```{r lib}
+library(gcmrec)
+```
+
+# Quick start
+
+A complete analysis takes three lines: build the response with `Survr()`, fit
+with `gcmrec()`, and read the result. Everything that follows in this vignette
+expands on these steps.
+
+```{r quickstart, eval = FALSE}
+data(readmission)
+
+fit <- gcmrec(Survr(id, time, event) ~ as.factor(dukes) + sex,
+              data = readmission, s = 3000)
+
+summary(fit)     # hazard ratios with confidence intervals
+plot(fit)        # baseline survivor function
+```
+
+# Input data
+
+`gcmrec` works on data in **long format**: one row per inter-event time, with a
+subject identifier repeated across its recurrences. Three variables are
+essential — `id`, `time` (the gap since the previous event, *not* calendar
+time) and `event` (1 for an event, 0 for the censoring time) — plus any
+covariates.
+
+We use the `readmission` cohort [@gonzalez2005readmission]:
+`r nrow(readmission)` records from 403 patients operated on for colorectal
+cancer, followed for rehospitalisations.
+
+```{r data}
+data(readmission)
+head(readmission, 4)
+
+length(unique(readmission$id))              # patients
+table(table(readmission$id) - 1)            # events per patient
+```
+
+Half of the patients are never readmitted, while a few accumulate many
+events — one reaches 22. That long tail is the kind of structure a recurrent
+model exploits and a single-event analysis would discard.
+
+The response is built with `Survr()`, which plays the role that `Surv()` plays
+in ordinary survival analysis:
+
+```{r survr}
+head(Survr(readmission$id, readmission$time, readmission$event), 4)
+```
+
+## Adding missing censoring times
+
+`Survr()` requires each subject to end with a censored record (`event = 0`),
+because the model needs to know how long the subject was observed *after* its
+last event. Data sets where follow-up ends exactly at the last event fail with
+`Data doesn't match`. `addCenTime()` repairs them by appending a row with time 0
+and `event = 0`:
+
+```{r addcentime}
+dat <- data.frame(id    = c(1, 1, 2, 2),
+                  time  = c(5, 3, 7, 4),
+                  event = c(1, 0, 1, 1))     # subject 2 ends on an event
+addCenTime(dat)
+```
+
+## Other input formats
+
+Historical `gcmrec` data sets are stored as a nested list (elements `n` and
+`subject`) rather than a data frame. You can pass them to `gcmrec()` directly —
+they are converted internally by `as_gcmrec_data()` — or convert them yourself
+with `List.to.Dataframe()`. The `hydraulic` data set, times to failure of six
+mining machines [@kumar1992], is in that format:
+
+```{r hydraulic}
+data(hydraulic)
+head(List.to.Dataframe(hydraulic), 3)
+```
+
+`as_gcmrec_data()` is a standard S3 generic, so support for further input
+classes is a matter of adding a method. Tibbles and `data.table`s already work,
+since they inherit from `data.frame`.
+
+# Exploring the data
+
+Before fitting anything, look at the events. Two complementary views answer two
+different questions.
+
+## Event chart
+
+`graph.caltimes()` draws one row per subject, a point at each recurrence and a
+cross at the end of follow-up. By default subjects are sorted by length of
+follow-up, which turns the chart into something readable:
+
+```{r explore, fig.height = 5, fig.cap = "Rehospitalisations of the first 40 patients. Each row is a patient, each dot a readmission, the cross the end of follow-up."}
+graph.caltimes(readmission[readmission$id %in% 1:40, ])
+```
+
+The picture already tells you what to expect: many patients with a single cross
+and no event, a few with dense clusters of readmissions. Passing a variable to
+`var` colours the subjects, and `sortevents = "events"` orders them by how many
+recurrences they had — a quick way to see whether a covariate separates high-
+from low-recurrence patients.
+
+## Mean cumulative function
+
+The individual chart does not scale beyond a few dozen subjects. The **mean
+cumulative function** (MCF) summarises the same information for the whole
+cohort: it is the expected number of events accumulated by one subject up to
+each time, estimated without assuming any model.
+
+```{r mcf, fig.height = 4.2, fig.cap = "Mean cumulative function by Dukes' stage: the expected number of readmissions per patient."}
+m <- mcf(readmission, group = readmission$dukes)
+m
+plot(m)
+```
+
+This single figure is the reason to fit a recurrent event model at all. A
+patient with a stage D tumour accumulates about
+`r round(max(m$estimate[m$group == "3"]), 1)` readmissions over the follow-up,
+against roughly `r round(max(m$estimate[m$group == "1"]), 1)` for stage A-B — and
+the separation appears early and grows steadily. The bands are pointwise
+confidence intervals; they widen at the right, where few patients remain under
+follow-up.
+
+# Fitting the model
+
+`gcmrec()` is the main entry point. You give it a formula with a `Survr()`
+response, the data, and a calendar time `s` up to which the analysis runs.
+
+```{r fit}
+fit <- gcmrec(Survr(id, time, event) ~ as.factor(dukes) + sex,
+              data = readmission, s = 3000)
+fit
+```
+
+## Arguments
+
+A handful of arguments let you match the model to your problem:
+
+| Argument     | Default                | What it controls |
+|:-------------|:-----------------------|:-----------------|
+| `s`          | —                      | calendar time up to which subjects are followed. Events after `s` do not contribute. |
+| `rhoFunc`    | `"alpha to k"`         | the effect of accumulated occurrences: $\rho(k;\alpha)=\alpha^k$, or `"Identity"` for $\rho \equiv 1$ (occurrences carry no extra effect, so no $\alpha$ is estimated). |
+| `typeEffage` | `"perfect"`            | the effective age model: `"perfect"` repair resets the subject to as-good-as-new at every event; `"minimal"` leaves it as-bad-as-old. |
+| `effageData` | `NULL`                 | supply your own effective age per subject instead of generating it (see below). |
+| `cancer`     | `NULL`                 | effective age driven by treatment response (`"CR"`/`"PR"`/`"SD"`), for the cancer model of González et al. (2005). |
+| `Frailty`    | `FALSE`                | add a gamma frailty per subject, fitted by EM. |
+| `se`         | `"Information matrix"` | how standard errors are obtained; `"Jacknife"` for leave-one-out estimates. |
+| `maxXi`      | `"Newton-Raphson"`     | maximiser for the frailty parameter $\xi$; `"Brent"` is a derivative-free alternative [@brent1973]. |
+| `tol`, `maxit` | `1e-6`, `100`        | convergence tolerance and iteration cap. |
+
+## Interpreting the output
+
+The `print` above has three parts. The **coefficient table** is read exactly as
+in a Cox model: `exp(coef)` is a hazard ratio, so Dukes' stage D patients have
+`r round(exp(coef(fit)[3]), 2)` times the readmission risk of stage A-B
+patients, and women (`sex = 2`) have a *lower* risk than men. The **`alpha`
+line** is what a Cox model cannot give you: here
+$\hat\alpha \approx `r round(coef(fit)[["alpha"]], 2)`$ with a small standard
+error, meaning each readmission raises the risk of the next by about
+`r round(100 * (coef(fit)[["alpha"]] - 1))`% — genuine event accumulation, on
+top of the covariates. Last come the **fit summaries**: log-likelihood, number
+of subjects, total records and iterations.
+
+`summary()` returns the hazard ratios with confidence intervals as an object
+with its own print method:
+
+```{r summary}
+summary(fit)
+```
+
+and `plotForest()` turns that table into the figure that usually goes into a
+report, on a logarithmic axis with a reference line at 1:
+
+```{r forest, fig.height = 3.2, fig.cap = "Hazard ratios with 95% confidence intervals. Intervals crossing the dashed line are compatible with no effect."}
+plotForest(fit, labels = c("as.factor(dukes)2" = "Dukes C vs A-B",
+                           "as.factor(dukes)3" = "Dukes D vs A-B",
+                           "sex" = "Female vs male"))
+```
+
+The standard extractors work as with any other model in R, so the fit plugs
+into the usual tooling:
+
+```{r extractors}
+coef(fit)
+sqrt(diag(vcov(fit)))       # standard errors
+logLik(fit)
+AIC(fit)
+```
+
+## Testing model terms
+
+The `alpha` line said that risk grows with each occurrence, but *is that
+difference real?* `anova()` answers with a likelihood ratio test against the
+same model with $\rho \equiv 1$ (that is, $\alpha = 1$: occurrences carry no
+effect), which it refits internally:
+
+```{r anova}
+anova(fit)
+```
+
+The test rejects $\alpha = 1$ decisively, so the accumulation of events is not
+an artefact: a model that ignores it — an ordinary Cox model on the gap times,
+for instance — would be misspecified for these data.
+
+Given two fits, the same function tests whether the extra covariates of the
+larger one are worth keeping:
+
+```{r anova-nested}
+fit.small <- gcmrec(Survr(id, time, event) ~ as.factor(dukes),
+                    data = readmission, s = 3000)
+anova(fit.small, fit)
+```
+
+A likelihood ratio test needs nested models fitted to the same data, so
+`anova()` checks that and refuses the comparison otherwise:
+
+| Comparison | Allowed? |
+|:-----------|:---------|
+| One model against itself with $\alpha = 1$ | yes, `anova(fit)` |
+| Nested covariates, everything else equal | yes |
+| `rhoFunc = "Identity"` against `"alpha to k"` | yes (this is the $\alpha$ test) |
+| Different `s`, `typeEffage`, `effageData` or `cancer` | no — not nested |
+| Different data (different subjects or records) | no |
+| Covariates that are not a subset of one another | no |
+| One fit with frailties and one without | no — see section 6 |
+| Two fits with frailties | approximate, with a warning |
+
+## Baseline functions
+
+`plot()` draws the estimated baseline survivor function against **effective
+age** (not calendar time), with a pointwise confidence band; `type.plot =
+"hazard"` draws the cumulative hazard instead.
+
+```{r plot-baseline, fig.height = 4.2, fig.cap = "Baseline survivor function on the effective age scale, with its 95% confidence band."}
+plot(fit)
+```
+
+Every plotting function returns a `ggplot` object, so you can restyle it with
+the usual syntax without the package getting in the way:
+
+```{r plot-styled, fig.height = 4.2, fig.cap = "The same curve, restyled."}
+plot(fit, type.plot = "hazard", level = 0.99) +
+  ggplot2::labs(title = "Baseline cumulative hazard",
+                subtitle = "Colorectal cancer readmissions")
+```
+
+## Predictions for covariate profiles
+
+The baseline describes a subject with all covariates at zero, which is rarely
+an interesting patient. `plotPredict()` draws the curve implied by concrete
+covariate profiles, and `predict()` returns the same numbers:
+
+```{r predict, fig.height = 4.2, fig.cap = "Predicted survivor function of the next readmission, by Dukes' stage (men)."}
+profiles <- data.frame(dukes = c(1, 2, 3), sex = 1)
+
+predict(fit, profiles, type = "risk")      # relative risk of each profile
+
+plotPredict(fit, profiles,
+            labels = c("Dukes A-B", "Dukes C", "Dukes D"))
+```
+
+Read these as the probability of *not yet* having the next readmission as a
+function of effective age: at any point, a stage D patient is markedly more
+likely to have recurred than a stage A-B one.
+
+# Effective age models
+
+The effective age is the heart of the model: it says what an event *does* to the
+subject. Two extremes come built in.
+
+**Perfect repair** (the default) resets the effective age to zero at every
+event: the patient leaves the hospital as good as new. **Minimal repair** leaves
+the effective age untouched: the patient is exactly as old as before, and the
+event changes nothing.
+
+```{r effage-models}
+mod.per <- gcmrec(Survr(id, time, event) ~ as.factor(dukes) + sex,
+                  data = readmission, s = 3000, typeEffage = "perfect")
+mod.min <- gcmrec(Survr(id, time, event) ~ as.factor(dukes) + sex,
+                  data = readmission, s = 3000, typeEffage = "minimal")
+
+rbind(perfect = coef(mod.per), minimal = coef(mod.min))
+```
+
+The covariate effects are similar under both, but $\alpha$ and the baseline are
+not — because the two assumptions place the events on different time scales.
+`plotBaseline()` takes a named list of fits and draws them together:
+
+```{r effage-compare, fig.height = 4.2, fig.cap = "Baseline survivor function under perfect and minimal repair."}
+plotBaseline(list(perfect = mod.per, minimal = mod.min))
+```
+
+## Effective age from treatment response
+
+Between those extremes, the intervention may repair the subject *partially*, and
+by an amount the data tell you. The `cancer` argument implements the model of
+@gonzalez2005cancer for cancer relapses, where the effective age after each
+treatment is set by the response achieved: complete remission (`"CR"`) resets it
+to zero, partial remission (`"PR"`) advances it by half the elapsed time, and
+stable disease (`"SD"`) — a null response — by the whole elapsed time.
+
+The `lymphoma` data set carries exactly that variable:
+
+```{r lymphoma}
+data(lymphoma)
+table(lymphoma$effage)
+
+mod.can <- gcmrec(Survr(id, time, event) ~ as.factor(distrib),
+                  data = lymphoma, s = 1000, cancer = lymphoma$effage)
+coef(mod.can)
+```
+
+If your effective age follows none of these schemes, compute it yourself and
+pass it through `effageData`, a list with one entry per subject (`intercepts`,
+`slopes`, `lastperrep`, `perrepind`, `effagebegin`, `effage`). `GeneratedData`
+is an example in that format:
+
+```{r effagedata}
+data(GeneratedData)
+dat.gen <- List.to.Dataframe(GeneratedData)
+
+mod.eff <- gcmrec(Survr(id, time, event) ~ covar.1 + covar.2,
+                  data = dat.gen, effageData = GeneratedData, s = 100)
+coef(mod.eff)
+```
+
+# Frailty models
+
+Two patients with identical covariates may still accumulate events at different
+rates. A **gamma frailty** $Z_i$ captures that unobserved heterogeneity, and
+induces dependence among the inter-event times of the same subject. Setting
+`Frailty = TRUE` fits the model by an EM algorithm:
+
+```{r frailty}
+mod.fra <- gcmrec(Survr(id, time, event) ~ as.factor(dukes) + sex,
+                  data = readmission, s = 3000, Frailty = TRUE)
+coef(mod.fra)
+mod.fra$Xi                        # frailty parameter
+```
+
+The parameter $\xi$ is read as an **inverse** measure of heterogeneity: the
+frailty has variance $1/\xi$, so small $\xi$ means very different subjects and
+$\xi \to \infty$ recovers the model without frailties. Here
+$\hat\xi \approx `r round(mod.fra$Xi, 2)`$ points to substantial heterogeneity
+between patients, which is why $\hat\alpha$ drops compared with the model
+without frailties: part of what looked like event accumulation was really the
+frail patients contributing most of the events.
+
+The estimated frailties themselves are returned, one per subject, and are
+informative in their own right:
+
+```{r frailty-values, fig.height = 3.8, fig.cap = "Estimated frailties. Patients to the right accumulate events faster than their covariates predict."}
+summary(mod.fra$frailties)
+
+ggplot2::ggplot(data.frame(z = mod.fra$frailties),
+                ggplot2::aes(x = z)) +
+  ggplot2::geom_histogram(bins = 30, fill = "#0072B2", alpha = 0.85) +
+  ggplot2::labs(x = "Estimated frailty", y = "Patients") +
+  theme_gcmrec()
+```
+
+Note that `anova()` does not apply here: the log-likelihood of a frailty fit is
+conditional on the estimated frailties, so it is not on the same scale as that
+of a model without them. Judge the heterogeneity from $\xi$ itself — with a
+standard error if you fit with `se = "Jacknife"` — and from the spread of the
+frailties, which here run from
+`r round(min(mod.fra$frailties), 2)` to `r round(max(mod.fra$frailties), 2)`.
+
+Frailty models are estimated by EM and are therefore slower than the plain fit,
+though the C++ core keeps a cohort of this size to a couple of seconds.
+
+# Standard errors
+
+By default standard errors come from the inverse of the partial likelihood
+information matrix. The alternative, `se = "Jacknife"`, refits the model
+leaving out each subject in turn: more robust, no distributional assumption,
+but *n* refits instead of one. It is the option to use when the information
+matrix is suspect — small samples, near-singular information — and the only way
+to get standard errors for the frailty model.
+
+```{r jackknife}
+sub <- readmission[readmission$id %in% unique(readmission$id)[1:60], ]
+
+mod.info <- gcmrec(Survr(id, time, event) ~ as.factor(dukes),
+                   data = sub, s = 3000)
+mod.jack <- gcmrec(Survr(id, time, event) ~ as.factor(dukes),
+                   data = sub, s = 3000, se = "Jacknife")
+
+rbind(information = sqrt(diag(vcov(mod.info))),
+      jackknife   = sqrt(diag(vcov(mod.jack))))
+```
+
+The two agree closely here, which is reassuring; a large discrepancy would be a
+warning that the information matrix is not to be trusted. Since the leave-one-out
+fits are independent of each other, the jackknife is computed in parallel when
+the package is built with OpenMP support.
+
+# Migrating from version 1.x
+
+If you used `gcmrec` 1.0-5, your analysis scripts still run: the function names,
+arguments and the structure of the fitted object are unchanged. What changed is
+underneath, plus a few additions:
+
+| Task | Version 1.0-5 | Now |
+|:-----|:--------------|:----|
+| Numerical core | Fortran 77 | C++ (`Rcpp`/`RcppArmadillo`), 6-45x faster |
+| Legacy list data | `List.to.Dataframe()` first | accepted directly by `gcmrec()`; `as_gcmrec_data()` is the extension point |
+| `summary()` | printed to the console | returns a `summary.gcmrec` object with a print method |
+| Coefficients, covariance, log-likelihood | `fit$coef`, `fit$var`, `fit$loglik` | also `coef()`, `vcov()`, `logLik()` (so `AIC()` works) |
+| Plots | base graphics | `ggplot2` objects you can restyle; shared look via `theme_gcmrec()` |
+| Comparing two fits | `plot(a); lines(b)` | `plotBaseline(list(a = a, b = b))` (`lines()` is deprecated) |
+| Maximum recurrences per subject | 200 (hard limit) | unlimited |
+
+New in this version, with no equivalent before: `mcf()` (mean cumulative
+function), `plotForest()`, `predict()` and `plotPredict()` for covariate
+profiles, and `anova()` for likelihood ratio tests.
+
+Two numerical results changed on purpose, both bug fixes. The baseline functions
+under `rhoFunc = "Identity"` were computed from an incomplete coefficient vector
+and are now correct; and the frailty jackknife used misaligned offsets in the
+leave-one-out refits. If you need to reproduce old numbers exactly, the original
+Fortran sources are kept in `tools/legacy-fortran/`.
+
+# Session info {.unnumbered}
+
+```{r sessioninfo, echo = FALSE}
+sessionInfo()
+```
+
+# References {.unnumbered}

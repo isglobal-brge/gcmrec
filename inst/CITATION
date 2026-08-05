@@ -1,0 +1,59 @@
+citHeader("To cite gcmrec in publications use:")
+
+bibentry(
+  bibtype  = "InCollection",
+  title    = "Models for recurrent events in reliability and survival analysis",
+  author   = c(person("Edsel A.", "Peña"),
+               person("Myles", "Hollander")),
+  booktitle = "Mathematical Reliability: An Expository Perspective",
+  chapter  = "6",
+  pages    = "105--123",
+  publisher = "Kluwer Academic Publishers",
+  year     = "2004",
+  textVersion = paste(
+    "Peña EA, Hollander M (2004).",
+    "Models for recurrent events in reliability and survival analysis.",
+    "In Mathematical Reliability: An Expository Perspective, chapter 6,",
+    "pp. 105-123. Kluwer Academic Publishers."
+  ),
+  header = "For the model fitted by the package:"
+)
+
+bibentry(
+  bibtype = "Article",
+  title   = "Modelling intervention effects after cancer relapses",
+  author  = c(person("Juan R.", "González"),
+              person("Edsel A.", "Peña"),
+              person("Elizabeth H.", "Slate")),
+  journal = "Statistics in Medicine",
+  volume  = "24",
+  number  = "24",
+  pages   = "3959--3975",
+  year    = "2005",
+  doi     = "10.1002/sim.2410",
+  textVersion = paste(
+    "González JR, Peña EA, Slate EH (2005).",
+    "Modelling intervention effects after cancer relapses.",
+    "Statistics in Medicine, 24(24), 3959-3975. doi:10.1002/sim.2410"
+  ),
+  header = "For the cancer model (argument 'cancer'):"
+)
+
+bibentry(
+  bibtype = "Manual",
+  title   = "{gcmrec}: General Class of Models for Recurrent Event Data",
+  author  = c(person("Dolors", "Pelegri-Siso"),
+              person("Juan R.", "González"),
+              person("Elizabeth H.", "Slate"),
+              person("Edsel A.", "Peña")),
+  year    = "2026",
+  note    = "R package version 2.0.0",
+  url     = "https://github.com/isglobal-brge/gcmrec",
+  textVersion = paste(
+    "Pelegri-Siso D, González JR, Slate EH, Peña EA (2026).",
+    "gcmrec: General Class of Models for Recurrent Event Data.",
+    "R package version 2.0.0.",
+    "https://github.com/isglobal-brge/gcmrec"
+  ),
+  header = "For the software itself:"
+)
