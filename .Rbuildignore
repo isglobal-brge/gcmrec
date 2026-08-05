@@ -2,6 +2,7 @@
 ^tools$
 ^docs$
 ^\.git$
+^\.github$
 ^\.clang-format$
 ^cran-comments\.md$
 ^README\.md$
