@@ -518,8 +518,10 @@ profiles, and `anova()` for likelihood ratio tests.
 Two numerical results changed on purpose, both bug fixes. The baseline functions
 under `rhoFunc = "Identity"` were computed from an incomplete coefficient vector
 and are now correct; and the frailty jackknife used misaligned offsets in the
-leave-one-out refits. If you need to reproduce old numbers exactly, the original
-Fortran sources are kept in `tools/legacy-fortran/`.
+leave-one-out refits. If you need to reproduce the old numbers exactly, version
+1.0-5 is available from the
+[CRAN archive](https://cran.r-project.org/src/contrib/Archive/gcmrec/) and
+tagged as `v1.0-5` in the package repository.
 
 # Session info {.unnumbered}
 

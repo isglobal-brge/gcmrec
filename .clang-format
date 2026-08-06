@@ -1,0 +1,8 @@
+# Estilo C++ del paquete gcmrec: base Google, indentacion de 2 espacios
+# (coherente con el estilo tidyverse de la parte R).
+# Aplicar con: clang-format -i src/*.cpp src/*.h
+BasedOnStyle: Google
+IndentWidth: 2
+ColumnLimit: 80
+DerivePointerAlignment: false
+PointerAlignment: Left
