@@ -13,3 +13,4 @@ src/*.dll
 *.Rcheck/
 *.tar.gz
 inst/doc/
+cran-comments.md
